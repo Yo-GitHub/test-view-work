@@ -1,0 +1,15 @@
+{
+  "group": [
+    { "id": "hozon", "title":"保存年限の分類", "file":"group-hozon.json" },
+    { "id": "horei", "title":"法令別の事例分類（点呼・整備・時間管理）", "file":"group-horei.json" },
+    { "id": "tenko", "title": "点呼の実施形態を分類せよ", "file": "group-tenko.json" }
+  ],
+  "match": [
+    { "id": "tenko-basics", "title": "点呼の要件（基礎）", "file": "match-tenko-basics.json" },
+    { "id": "rtol-terms",   "title": "道路交通法：用語↔定義", "file": "match-rtol-terms.json" },
+    { "id": "law-numbers",  "title": "法令数値：距離・保存年限", "file": "match-law-numbers.json" }
+  ],
+  "mcq": [
+    { "id": "kanri", "title": "運行管理者試験（貨物）", "file": "mcq.json" }
+  ]
+}
