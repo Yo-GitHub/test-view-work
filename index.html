@@ -30,7 +30,10 @@
   .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}
   .bank{min-height:72px;background:#fafbff;border:1px dashed #d7dbef;border-radius:12px;padding:10px}
   .cards{display:flex;flex-wrap:wrap;gap:8px}
-  .card{background:var(--card);border:2px solid #e1e4f2;border-radius:12px;padding:10px 12px;cursor:grab;user-select:none}
+ .card{background:var(--card);border:2px solid #e1e4f2;border-radius:12px;padding:10px 12px;cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+ #mcqOptions .card.selected { outline: 2px solid #7aa2ff; transform: translateY(-1px); }
+#mcqMultiBar .btn { padding: .4rem .8rem; }
+ .bank, .col, .cards, #leftList, #rightList, #binContainer{ -webkit-user-select:none; user-select:none; }
   .card:active{cursor:grabbing}
   .card.vanish{ animation: popout .22s ease-out forwards }
   .bin{background:var(--bin);border:2px solid var(--bin-b);border-radius:12px;padding:10px;}
@@ -45,6 +48,13 @@
   .col .bin{ margin-bottom:10px; }
   .item{background:#fff;border:2px solid #e1e4f2;border-radius:10px;padding:8px 10px;margin:6px 0;cursor:pointer}
   .item.sel{border-color:#7aa2ff;box-shadow:0 0 0 3px #e7edff}
+  /* 改行や複数スペースをそのまま表示 */
+.mcq .qtitle,
+.card,
+.item,
+.bin-title { white-space: pre-wrap; line-break: anywhere; }
+#groupQuestionTitle { max-width: 50vw; display:inline-block; }
+#matchQuestionTitle { max-width: 50vw; display:inline-block; }
   /* マッチング：ドラッグ＆ドロップ演出 */
   .item.dragging{opacity:.5}
   .item.dropzone{outline:2px dashed #9bb0ff; background:#eef3ff}
@@ -101,7 +111,7 @@
 <body>
 <header>
   <h1>WordJam式トレーナー：グループ分け & マッチング</h1>
-  <div class="sub">カードを「類」へ仕分け、または左右を対応づけて“知識を束ね直す”でござる。</div>
+  <div class="sub">「覚える」から「整理して思い出す」へ。誤答は次ラウンドで多めに出します。</div>
 </header>
 
 <main>
@@ -179,7 +189,7 @@
     </select>
     <button class="btn" id="resetMCQ">リセット</button>
     <button class="btn ghost" id="showSummaryMCQ">直前の要約</button>
-    <span class="pill" id="mcqMeterPill">進行 0%</span>
+    <span class="pill" id="mcqMeterPill">進行 0/0</span>
   </div>
 
   <div class="mcq" style="margin-top:12px">
@@ -188,6 +198,10 @@
       <div class="qhint" id="mcqHint"></div>
     </div>
     <div class="grid" id="mcqOptions"></div>
+    <div id="mcqMultiBar" style="display:none;gap:.5rem;align-items:center;">
+      <span id="mcqMultiHint">複数選択：0件</span>
+      <button id="mcqCommit" class="btn">確定</button>
+    </div>
     <div class="explain" id="mcqExplain" style="display:none">
       <div class="hd">解説</div>
       <div id="mcqReason"></div>
@@ -221,8 +235,23 @@
 </div>
 </main>
 <script>
+  (function () {
+    let dragging = false;
+    // 既存のドラッグ開始／終了イベントで dragging を立てる
+    window.addEventListener('dragstart', () => dragging = true, true);
+    window.addEventListener('dragend', () => dragging = false, true);
+    // タッチ端末でドラッグ中のスクロールを止める
+    window.addEventListener('touchmove', (e) => {
+      if (dragging) { e.preventDefault(); }
+    }, { passive: false });
+  })();
+</script>
+<script>
 /* ====== データ ====== */
-
+// 先頭の <script> 付近に追加
+function normalizeText(s){
+  return (typeof s === 'string') ? s.replace(/\\n/g, '\n') : s;
+}
 // グループ分け：カード（各カードに正しい group を付与）
 const GROUP_DATA = [
   {label:"過マンガン酸カリウム", group:"第1類"},
@@ -235,6 +264,32 @@ const GROUP_DATA = [
   {label:"灯油", group:"第4類"}
 ];
 
+// --- group multi-question support ---
+let groupQuestions = [];      // 現在ロード中ファイルの questions[]（なければ単一を包む）
+let groupQFile = null;        // 現在の JSON パス
+let groupHasMulti = false; // 現在のテーマJSONが questions[] を持つか
+
+  function ensureGroupQuestionTitle() {
+    let span = document.getElementById('groupQuestionTitle');
+    if (!span) {
+      span = document.createElement('span');
+      span.id = 'groupQuestionTitle';
+      span.className = 'pill';
+      span.style.marginLeft = '8px';
+      // 差し込み先：お題セレクトの直後
+      const themeSel = document.getElementById('groupThemeSelect');
+      if (themeSel && themeSel.parentElement) {
+        themeSel.parentElement.insertBefore(span, themeSel.nextSibling);
+      } else {
+        const row = document.getElementById('groupControls')
+          || document.getElementById('groupHeader')
+          || document.querySelector('#groupTab .rowbtn')
+          || document.getElementById('groupPanel').querySelector('.row');
+        row && row.appendChild(span);
+      }
+    }
+    return span;
+  }
 // マッチング：類↔定義
 const MATCH_LEFT = [
   {label:"第1類", bin:"第1類"},
@@ -490,10 +545,27 @@ async function switchGroupThemeByFile(path){
     const res = await fetch(path, {cache:'no-store'});
     if(!res.ok) throw new Error('theme file not found');
     const obj = await res.json();
+    // ---- multi-question file support (random + title display) ----
+    groupQFile = path;
+    const titleEl = ensureGroupQuestionTitle();
+    groupHasMulti = Array.isArray(obj.questions) && obj.questions.length > 0;
+
+    if (groupHasMulti) {
+      const idx = Math.floor(Math.random() * obj.questions.length);
+      const pick = obj.questions[idx];
+      titleEl.textContent = pick.title || `お題 ${idx + 1}`;
+      obj.title = pick.title;
+      obj.bins = pick.bins;
+      obj.items = pick.items;
+    } else {
+      titleEl.textContent = obj.title || 'お題 1';
+    }
+    // ---- end of multi-question support ----
     const dataset = loadGroupFromJSON(obj);
     if(!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid theme');
     groupDataset = dataset;
     FULL_GROUP_POOL = [...groupDataset.items];
+    if (typeof usedGroup !== 'undefined' && usedGroup && typeof usedGroup.clear === 'function') { usedGroup.clear(); }
   }catch(e){
     console.warn('テーマ切替に失敗：', e.message);
     return;
@@ -539,17 +611,32 @@ let currentCardEl = null;
 
 // ====== 外部データプールとサンプリング ======
 let FULL_GROUP_POOL = [...GROUP_DATASET_FALLBACK.items];
+let usedGroup = new Set(); // ラウンド間の既出カード記録（テーマ内）
 const POOL_SIZE = 8;
-let groupCards = [];
-function sampleCurrent(){
-  const n = Math.min(POOL_SIZE, FULL_GROUP_POOL.length);
-  groupCards = weightedSample([...FULL_GROUP_POOL], n, x=>x.label);
-}
+ let groupCards = [];
+ function sampleCurrent(){
+   const all = [...FULL_GROUP_POOL];
+   // 1) 未出を優先
+   const fresh = all.filter(x => !usedGroup.has(x.label));
+   if (fresh.length >= POOL_SIZE) {
+     groupCards = weightedSample(fresh, POOL_SIZE, x=>x.label);
+   } else {
+     // 2) 未出が不足：一旦リセットして全体から再開（連続学習を止めない）
+     const remainNeed = POOL_SIZE - fresh.length;
+     const pickedFresh = fresh.length ? weightedSample(fresh, fresh.length, x=>x.label) : [];
+     // 直前ラウンドで使ったものと偏りを避けるため、一度リセット
+     usedGroup.clear();
+     const refillPool = all.filter(x => !pickedFresh.find(p=>p.label===x.label));
+     const pickedRefill = weightedSample(refillPool, Math.min(remainNeed, refillPool.length), x=>x.label);
+     groupCards = [...pickedFresh, ...pickedRefill];
+   }
+ }
 function updatePoolInfo(){
   const el = document.getElementById('poolInfo');
   if(!el) return;
-  const shown = document.querySelectorAll('.card').length || Math.min(POOL_SIZE, FULL_GROUP_POOL.length);
-  el.textContent = `プール: ${FULL_GROUP_POOL.length} / 表示: ${shown}`;
+  const remaining = FULL_GROUP_POOL.filter(x=>!usedGroup.has(x.label)).length;
+  const shown = bank.querySelectorAll('.card').length || Math.min(POOL_SIZE, FULL_GROUP_POOL.length);
+  el.textContent = `未出: ${remaining} / 表示: ${shown}`;
 }
 
 
@@ -560,7 +647,7 @@ function renderGroupCards(){
     el.className = 'card';
     el.draggable = true;
     el.dataset.idx = i;
-    el.textContent = c.label;
+    el.textContent = normalizeText(c.label);
     el.addEventListener('dragstart', onDragStart);
     el.onclick = null; // 念のため既存のハンドラをクリア
     bank.appendChild(el);
@@ -663,36 +750,29 @@ function updateGroupProgress(){
   const total = groupCards.length;
   groupResult.textContent = `進捗：${matchedGroupCount} / ${total}`;
   if(matchedGroupCount >= total){
-    groupResult.innerHTML = `進捗：${matchedGroupCount} / ${total}　🎉 コンプリート！`;
+    groupResult.innerHTML = `進捗：${matchedGroupCount} / ${total}　🎉 コンプリート！ 次セットを用意中…`;
+    // 今ラウンドで出たカードを既出セットへ追加
+    groupCards.forEach(c => usedGroup.add(c.label));
     saveSessionSilently('group');
-    // 自動シャッフルはしない（要約は手動で開く）
+    // 少し演出してから自動で次セット
+    setTimeout(() => {
+      if (groupHasMulti && groupQFile) {
+        matchedGroupCount = 0;
+        switchGroupThemeByFile(groupQFile); // 次のお題をランダム抽選
+      } else {
+        bank.querySelectorAll('.card').forEach(c => c.remove());
+        sampleCurrent();
+        renderGroupCards();
+        matchedGroupCount = 0;
+        groupResult.textContent = '進捗：0 / ' + groupCards.length;
+        updatePoolInfo();
+      }
+    }, 350);
   }
 }
-
-// ====== SP：ビン内カードはタップで即バンクへ戻す ======
-allBins().forEach(bin=>{
-  bin.addEventListener('click', (e)=>{
-    const card = e.target.closest('.card');
-    if(card && isSmall()){
-      card.classList.remove('ok','ng');
-      bank.appendChild(card);
-    }
-  });
-});
+// SPではビン内カードもタップで再配属（openAssigner へ）
+// ※ ここから下は assigner 表示系のみ。閉じ処理や handleCardTap は上側の定義を使用
 // ====== タップ配属用：シート生成と操作 ======
-
-assignerCancel.addEventListener('click', closeAssigner);
-// 画面外タップで閉じる（安全のため body キャプチャ）
-document.addEventListener('click', (e)=>{
-  if(!assigner.classList.contains('show')) return;
-  const within = e.target.closest('#assigner');
-  if(!within) closeAssigner();
-}, true);
-// モバイル時のカードタップハンドラ
-function handleCardTap(el){
-  if(!isSmall()) return; // PCではドラッグ優先
-  openAssigner(el);
-}
 // 既にビンに入ったカードもタップで再配属できるようにする（イベント委譲）
 allBins().forEach(bin=>{
   bin.addEventListener('click', (e)=>{
@@ -701,13 +781,20 @@ allBins().forEach(bin=>{
   });
 });
 
-function shuffleGroup(){
-  document.querySelectorAll('.card').forEach(c=>c.remove());
-  sampleCurrent();
-  renderGroupCards();
-  matchedGroupCount = 0;
-  groupResult.textContent = '進捗：0 / '+groupCards.length;
-}
+  function shuffleGroup() {
+    // 複数お題ファイルなら、次お題をランダム再選択
+    if (groupHasMulti && groupQFile) {
+      matchedGroupCount = 0;
+      switchGroupThemeByFile(groupQFile);
+      return;
+    }
+    // 単一お題：従来どおりカードのみ入れ替え
+    bank.querySelectorAll('.card').forEach(c => c.remove());
+    sampleCurrent();
+    renderGroupCards();
+    matchedGroupCount = 0;
+    groupResult.textContent = '進捗：0 / ' + groupCards.length;
+  }
 
 
 // ====== 外部ファイル読込（自動JSON） ======
@@ -754,7 +841,7 @@ async function loadDefaultGroup(){
   bindDnD(); // 新しいビンにD&Dを付与
 
   // 再サンプル→描画
-  document.querySelectorAll('.card').forEach(c=>c.remove());
+  bank.querySelectorAll('.card').forEach(c => c.remove());
   sampleCurrent();
   renderGroupCards();
   matchedGroupCount = 0;
@@ -792,6 +879,28 @@ const matchResult = document.getElementById('matchResult');
 const matchThemeSelect = document.getElementById('matchThemeSelect');
 const matchThemePill   = document.getElementById('matchTheme');
 let matchCatalog = []; // {id,title,file}
+// --- match multi-question support ---
+let matchQFile = null;        // 現在のマッチ用JSONパス
+let matchHasMulti = false;    // questions[] があるか
+let matchSwitching = false; // テーマ切替中ガード（shuffleMatchとの相互再帰を防ぐ）
+function ensureMatchQuestionTitle(){
+  let span = document.getElementById('matchQuestionTitle');
+  if(!span){
+    span = document.createElement('span');
+    span.id = 'matchQuestionTitle';
+    span.className = 'pill';
+    span.style.marginLeft = '8px';
+    const themeSel = document.getElementById('matchThemeSelect');
+    if(themeSel && themeSel.parentElement){
+      themeSel.parentElement.insertBefore(span, themeSel.nextSibling);
+    } else {
+      const row = document.querySelector('#matchPanel .row');
+      row && row.appendChild(span);
+    }
+  }
+  return span;
+}
+
 
 async function loadMatchCatalog(){
   try{
@@ -816,24 +925,51 @@ async function loadMatchCatalog(){
 }
 
 async function switchMatchThemeByFile(path){
-  try{
-    const res = await fetch(path, {cache:'no-store'});
-    if(!res.ok) throw new Error('match theme not found');
+  try {
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) throw new Error('match theme not found');
     const obj = await res.json();
-    const src = obj.match || obj; // {left,right} 直下／配下両対応
-    const leftRaw  = src.left  || [];
-    const rightRaw = src.right || [];
-    FULL_MATCH_LEFT  = leftRaw .map(x=>({ label: x.label||x.text||x.key, bin: x.bin||x.key||x.bin }));
-    FULL_MATCH_RIGHT = rightRaw.map(x=>({ label: x.label||x.text||x.key, bin: x.bin||x.key||x.bin }));
-  }catch(e){
+    matchQFile = path;
+    const titleEl = ensureMatchQuestionTitle();
+
+    // 互換：obj.match 直下/配下いずれも許容。
+    const srcRoot = obj.match || obj;
+
+    // 1) 新形式：questions[] 優先
+    if (Array.isArray(srcRoot.questions) && srcRoot.questions.length) {
+      matchHasMulti = true;
+      const idx = Math.floor(Math.random() * srcRoot.questions.length);
+      const q = srcRoot.questions[idx];
+      titleEl.textContent = q.title || `お題 ${idx + 1}`;
+      const leftRaw = q.left || [];
+      const rightRaw = q.right || [];
+      FULL_MATCH_LEFT = leftRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
+      FULL_MATCH_RIGHT = rightRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
+    } else {
+      // 2) 旧形式：左・右の配列のみ
+      matchHasMulti = false;
+      titleEl.textContent = (srcRoot.title || 'お題 1');
+      const leftRaw = srcRoot.left || [];
+      const rightRaw = srcRoot.right || [];
+      FULL_MATCH_LEFT = leftRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
+      FULL_MATCH_RIGHT = rightRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
+    }
+  } catch (e) {
     console.warn('マッチングのテーマ切替に失敗：', e.message);
     return;
   }
-  if(matchThemePill){
-    const opt = [...matchThemeSelect.options].find(o=>o.value===path);
+  matchSwitching = true; // ← 再帰防止開始
+  if (matchThemePill) {
+    const opt = [...matchThemeSelect.options].find(o => o.value === path);
     matchThemePill.textContent = opt ? opt.textContent : matchThemePill.textContent;
   }
-  shuffleMatch();
+  // 直接サンプル→描画（shuffleMatch は呼ばない）
+  pairs.clear(); selL = selR = null; matchedPairs = 0;
+  sampleMatch();
+  renderMatch();
+  updateMatchPoolInfo();
+  matchResult.textContent = `進捗：0 / ${L.length}`;
+  matchSwitching = false; // ← 再帰防止終了
 }
 
 if(matchThemeSelect){
@@ -886,7 +1022,7 @@ function renderMatch(){
   L.forEach(item => {
     const el = document.createElement('div');
     el.className = 'item';
-    el.textContent = item.label;
+    el.textContent = normalizeText(item.label);
     el.dataset.bin = item.bin;
     el.dataset.side = 'L';
     el.draggable = true;
@@ -898,7 +1034,7 @@ function renderMatch(){
   R.forEach(item => {
     const el = document.createElement('div');
     el.className = 'item';
-    el.textContent = item.label;
+    el.textContent = normalizeText(item.label);
     el.dataset.bin = item.bin;
     el.dataset.side = 'R';
     el.addEventListener('dragover', onMatchDragOver);
@@ -949,9 +1085,22 @@ function onMatchDrop(e){
     setTimeout(()=>{ leftEl.remove(); rightEl.remove(); }, 220);
     matchedPairs++;
     matchResult.textContent = `進捗：${matchedPairs} / ${totalPairs}`;
-    if(matchedPairs >= totalPairs){
-      matchResult.innerHTML = `進捗：${matchedPairs} / ${totalPairs}　🎉 コンプリート！`;
+    if (matchedPairs >= totalPairs) {
+      matchResult.innerHTML = `進捗：${matchedPairs} / ${totalPairs}　🎉 コンプリート！ 次セットを用意中…`;
       saveSessionSilently('match');
+      // 少し間を置いて次セットへ。複数お題ファイルなら次お題をランダム抽選
+      setTimeout(() => {
+        pairs.clear(); selL = selR = null;
+        if (matchHasMulti && matchQFile && !matchSwitching) {
+          switchMatchThemeByFile(matchQFile); // 内部で sample→render 済み
+        } else {
+          sampleMatch();
+          renderMatch();
+          updateMatchPoolInfo();
+          matchedPairs = 0;
+          matchResult.textContent = `進捗：0 / ${L.length}`;
+        }
+      }, 350);
     }
   }else{
     logAttempt('match', { label: draggingText, bin: draggingBin, tried: triedBin, result:'ng' });
@@ -965,6 +1114,11 @@ function shuffleMatch(){
   pairs.clear(); selL = selR = null;
   clearOverlays();
   matchedPairs = 0;
+  // 複数お題ファイル：切替中でなければ次お題をランダム再選択
+  if (matchHasMulti && matchQFile && !matchSwitching){
+    switchMatchThemeByFile(matchQFile);
+    return; // 内部でサンプル→描画済み
+  }
   sampleMatch();
   renderMatch();
   updateMatchPoolInfo();
@@ -1029,12 +1183,18 @@ async function switchMCQThemeByFile(path){
     if (!Array.isArray(quiz) || !quiz.length) throw new Error('empty mcq');
     // 正規化：options/choices/opts のいずれかを options に寄せ、bin は answer で補完
     quiz = quiz.map(q => {
-      const options = Array.isArray(q.options) ? q.options
-        : Array.isArray(q.choices) ? q.choices
-          : Array.isArray(q.opts) ? q.opts
-            : [];
-      const bin = q.bin || q.answer || null;
-      return { ...q, options, bin };
+      // options/choices/opts のどれかを options に正規化
+      const options = Array.isArray(q.options) ? q.options.slice()
+        : Array.isArray(q.choices) ? q.choices.slice()
+          : Array.isArray(q.opts) ? q.opts.slice() : [];
+      const rawAns = (q.answer !== undefined) ? q.answer : ((q.bin !== undefined) ? q.bin : null);
+      let answers = Array.isArray(rawAns) ? rawAns.slice() : (rawAns != null ? [rawAns] : []);
+      // 数字指定（1始まり）ならテキストへ変換
+      if (answers.length && answers.every(v => /^\d+$/.test(String(v)))) {
+        answers = answers.map(i => options[Number(i) - 1]).filter(Boolean);
+      }
+      const qtype = q.type || (answers.length > 1 ? 'multi' : 'one');
+      return { ...q, options, answer: answers, type: qtype };
     });
     MCQ.length = 0; MCQ.push(...quiz);
   }catch(e){
@@ -1055,6 +1215,7 @@ if(mcqThemeSelect){
 }
 
 let mcqOrder = []; let mcqIdx = 0; let mcqCorrect = 0; let mcqDone = 0; let mcqLocked = false;
+let mcqMultiSel = new Set(); // 複数選択の一時セット
 function mcqShuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]];} return arr; }
 function mcqResetOrder(){ mcqOrder = mcqShuffle([...MCQ.keys()].map(i=>i)); mcqIdx=0; mcqCorrect=0; mcqDone=0; }
 function mcqRender(){
@@ -1064,23 +1225,23 @@ function mcqRender(){
   const optionsDiv = document.getElementById('mcqOptions');
   const ex = document.getElementById('mcqExplain');
   const meter = document.getElementById('mcqMeterPill');
+  const bar = document.getElementById('mcqMultiBar');
+  const barHint = document.getElementById('mcqMultiHint');
 
-  qEl.textContent = q.question || '(無題)';
+  
+  qEl.textContent = normalizeText(q.question || '(無題)');
   hintEl.textContent = q.hint || '';
   optionsDiv.innerHTML = '';
   ex.style.display = 'none';
+  mcqLocked = false;
+  mcqMultiSel.clear();
   meter.textContent = `進行 ${mcqCorrect}/${MCQ.length}`;
 
-  // ---- 選択肢の正規化 ----
+  // 選択肢
   let opts = Array.isArray(q.options) ? [...q.options]
           : Array.isArray(q.choices) ? [...q.choices]
-          : Array.isArray(q.opts)    ? [...q.opts]
-          : [];
-  // bin 統一：bin が未指定で answer があれば bin=answer へ寄せる
-  if(!q.bin && q.answer){ q.bin = q.answer; }
-
+          : Array.isArray(q.opts)    ? [...q.opts] : [];
   if(!opts.length){
-    // データ不備を可視化（silent failを避ける）
     const warn = document.createElement('div');
     warn.className = 'qhint';
     warn.textContent = 'この問題の選択肢データが見つかりません（options/choices/opts のいずれかを用意してください）。';
@@ -1088,14 +1249,50 @@ function mcqRender(){
     return;
   }
 
+  // 正解は配列で保持（単一でも配列化）
+  const answers = Array.isArray(q.answer) ? q.answer : (q.answer!=null ? [q.answer] : []);
+  const isMulti = (q.type === 'multi') || (answers.length > 1);
+  bar.style.display = isMulti ? 'flex' : 'none';
+  barHint.textContent = '複数選択：0件';
+
   const shuffled = mcqShuffle([...opts]);
   shuffled.forEach(text=>{
     const c = document.createElement('div');
     c.className = 'card';
     c.textContent = text;
-    c.onclick = ()=> mcqCheck(c, text, q);
+
+    if(isMulti){
+      // 複数：トグル選択
+      c.onclick = ()=>{
+        if(mcqLocked) return;
+        const t = c.textContent;
+        if(mcqMultiSel.has(t)){ mcqMultiSel.delete(t); c.classList.remove('selected'); }
+        else { mcqMultiSel.add(t); c.classList.add('selected'); }
+        barHint.textContent = `複数選択：${mcqMultiSel.size}件`;
+      };
+    }else{
+      // 単一：即判定
+      c.onclick = ()=> mcqCheckSingle(c, text, answers[0], q);
+    }
+
     optionsDiv.appendChild(c);
   });
+}
+function mcqCheckSingle(card, text, correct, q){
+  if(mcqLocked) return; mcqLocked = true;
+  const all = [...document.querySelectorAll('#mcqOptions .card')];
+  all.forEach(el=>{
+    if(el.textContent === correct) el.classList.add('correct');
+    else if(el === card) el.classList.add(text===correct ? 'correct' : 'wrong');
+    el.style.pointerEvents='none';
+  });
+  const ok = (text === correct);
+  logAttempt('mcq', { label:q.id, bin: [correct], tried: [text], result: ok?'ok':'ng' });
+  if (ok) { mcqCorrect++; if(navigator.vibrate) navigator.vibrate([30]); }
+  document.getElementById('mcqReason').innerHTML = `<strong>${ok?'正解！':'不正解…'}</strong>　${q.reason||''}`;
+  document.getElementById('mcqSource').textContent = q.source || '';
+  document.getElementById('mcqExplain').style.display='block';
+  document.getElementById('mcqMeterPill').textContent = `進行 ${mcqCorrect}/${MCQ.length}`;
 }
 function mcqCheck(card, text, q){
   if(mcqLocked) return; mcqLocked = true;
@@ -1127,6 +1324,35 @@ function mcqNext(){
   }
 }
 function mcqRetry(){ mcqLocked = false; mcqRender(); }
+
+const mcqCommitBtn = document.getElementById('mcqCommit');
+if (mcqCommitBtn){
+  mcqCommitBtn.onclick = ()=>{
+    const q = MCQ[mcqOrder[mcqIdx]];
+    if(mcqLocked) return;
+    const correctArr = Array.isArray(q.answer) ? q.answer : (q.answer!=null ? [q.answer] : []);
+    const selArr = Array.from(mcqMultiSel);
+
+    const eq = (a,b)=> a.length===b.length && a.every(x=> b.includes(x));
+    const ok = eq(selArr, correctArr);
+
+    mcqLocked = true;
+    const all = [...document.querySelectorAll('#mcqOptions .card')];
+    all.forEach(el=>{
+      const t = el.textContent;
+      if (correctArr.includes(t)) el.classList.add('correct');
+      if (mcqMultiSel.has(t) && !correctArr.includes(t)) el.classList.add('wrong');
+      el.style.pointerEvents='none';
+    });
+
+    logAttempt('mcq', { label:q.id, bin: correctArr, tried: selArr, result: ok?'ok':'ng' });
+    if (ok) { mcqCorrect++; if(navigator.vibrate) navigator.vibrate([40]); }
+    document.getElementById('mcqReason').innerHTML = `<strong>${ok?'正解！':'不正解…'}</strong>　${q.reason||''}`;
+    document.getElementById('mcqSource').textContent = q.source || '';
+    document.getElementById('mcqExplain').style.display='block';
+    document.getElementById('mcqMeterPill').textContent = `進行 ${mcqCorrect}/${MCQ.length}`;
+  };
+}
 
 document.getElementById('mcqNextBtn').addEventListener('click', mcqNext);
 document.getElementById('mcqRetryBtn').addEventListener('click', mcqRetry);
@@ -1172,7 +1398,7 @@ btnRetry.addEventListener('click', ()=>{
   } else if (pC.style.display !== 'none') { // 四択
     mcqRender();
   } else {                                 // グループ分け
-    document.querySelectorAll('.card').forEach(c=>c.remove());
+    bank.querySelectorAll('.card').forEach(c => c.remove());
     renderGroupCards();
     matchedGroupCount = 0;
     groupResult.textContent = '進捗：0 / '+groupCards.length;
@@ -1205,12 +1431,18 @@ async function loadDefaultMatch(){
       if (obj.quiz && Array.isArray(obj.quiz) && obj.quiz.length) {
              let quiz = obj.quiz;
         quiz = quiz.map(q => {
-          const options = Array.isArray(q.options) ? q.options
-            : Array.isArray(q.choices) ? q.choices
-              : Array.isArray(q.opts) ? q.opts
-                : [];
-          const bin = q.bin || q.answer || null;
-          return { ...q, options, bin };
+          // options/choices/opts のどれかを options に正規化
+          const options = Array.isArray(q.options) ? q.options.slice()
+            : Array.isArray(q.choices) ? q.choices.slice()
+              : Array.isArray(q.opts) ? q.opts.slice() : [];
+          const rawAns = (q.answer !== undefined) ? q.answer : ((q.bin !== undefined) ? q.bin : null);
+          let answers = Array.isArray(rawAns) ? rawAns.slice() : (rawAns != null ? [rawAns] : []);
+          // 数字指定（1始まり）ならテキストへ変換
+          if (answers.length && answers.every(v => /^\d+$/.test(String(v)))) {
+            answers = answers.map(i => options[Number(i) - 1]).filter(Boolean);
+          }
+          const qtype = q.type || (answers.length > 1 ? 'multi' : 'one');
+          return { ...q, options, answer: answers, type: qtype };
         });
         MCQ.length = 0;
         MCQ.push(...quiz);
@@ -1222,7 +1454,6 @@ async function loadDefaultMatch(){
   }
 
   // 起動時に3種類読み込む
-  loadDefaultGroup();
   loadDefaultMatch();
   loadDefaultMCQ();
 

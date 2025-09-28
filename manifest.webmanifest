@@ -1,6 +1,6 @@
 {
-  "name": "乙四 WordJam式トレーナー",
-  "short_name": "乙四WordJam",
+  "name": "保育士試験対策WordJam式トレーナー",
+  "short_name": "保育士WordJam",
   "start_url": "./?source=pwa",
   "scope": "./",
   "display": "standalone",
