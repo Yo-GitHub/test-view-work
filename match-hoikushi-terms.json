@@ -1,5 +1,7 @@
 {
   "match": {
+    "leftTitle": "左：用語（保育内容）",
+    "rightTitle": "右：定義・根拠",
     "questions": [
       {
         "title": "基本用語を定義にマッチさせよ",

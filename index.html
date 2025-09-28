@@ -165,12 +165,12 @@
 
     <div class="pairwrap" style="margin-top:12px">
       <div class="col">
-        <h3>左：類</h3>
+        <h3 id="matchLeftHdr">左：用語</h3>
         <div id="leftList"></div>
         <div class="pickOverlay" id="overlayLeft" aria-hidden="true"></div>
       </div>
       <div class="col">
-        <h3>右：定義（代表性状）</h3>
+        <h3 id="matchRightHdr">右：説明</h3>
         <div id="rightList"></div>
         <div class="pickOverlay" id="overlayRight" aria-hidden="true"></div>
       </div>
@@ -884,6 +884,8 @@ let matchQFile = null;        // 現在のマッチ用JSONパス
 let matchHasMulti = false;    // questions[] があるか
 let matchSwitching = false; // テーマ切替中ガード（shuffleMatchとの相互再帰を防ぐ）
 function ensureMatchQuestionTitle(){
+  const matchLeftHdr = document.getElementById('matchLeftHdr');
+  const matchRightHdr = document.getElementById('matchRightHdr');
   let span = document.getElementById('matchQuestionTitle');
   if(!span){
     span = document.createElement('span');
@@ -943,6 +945,11 @@ async function switchMatchThemeByFile(path){
       titleEl.textContent = q.title || `お題 ${idx + 1}`;
       const leftRaw = q.left || [];
       const rightRaw = q.right || [];
+      // 見出し（問題→ファイル→デフォルトの優先順）
+      const lt = q.leftTitle || srcRoot.leftTitle || '左：用語';
+      const rt = q.rightTitle || srcRoot.rightTitle || '右：説明';
+      if (matchLeftHdr) matchLeftHdr.textContent = lt;
+      if (matchRightHdr) matchRightHdr.textContent = rt;
       FULL_MATCH_LEFT = leftRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
       FULL_MATCH_RIGHT = rightRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
     } else {
@@ -951,6 +958,10 @@ async function switchMatchThemeByFile(path){
       titleEl.textContent = (srcRoot.title || 'お題 1');
       const leftRaw = srcRoot.left || [];
       const rightRaw = srcRoot.right || [];
+      const lt = srcRoot.leftTitle || '左：用語';
+      const rt = srcRoot.rightTitle || '右：説明';
+      if (matchLeftHdr) matchLeftHdr.textContent = lt;
+      if (matchRightHdr) matchRightHdr.textContent = rt;
       FULL_MATCH_LEFT = leftRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
       FULL_MATCH_RIGHT = rightRaw.map(x => ({ label: x.label || x.text || x.key, bin: x.bin || x.key || x.bin }));
     }
