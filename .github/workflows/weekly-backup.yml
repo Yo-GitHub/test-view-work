@@ -1,0 +1,35 @@
+name: Weekly Backup
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # 毎週月曜 9:00 JST
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run backup script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          GIT_AUTHOR_NAME: Yo-GitHub
+          GIT_AUTHOR_EMAIL: Yo-GitHub@users.noreply.github.com   # ←ここダミーを差し替え
+        run: |
+          node scripts/backup-to-notion.js
+          git config --global user.name "${GIT_AUTHOR_NAME}"
+          git config --global user.email "${GIT_AUTHOR_EMAIL}"
+          git add backups/
+          git commit -m "Weekly backup"
+          git push origin main

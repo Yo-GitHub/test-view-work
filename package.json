@@ -1,0 +1,9 @@
+{
+  "name": "wordjam-weekly-backup",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@notionhq/client": "^2.2.14" },
+  "scripts": {
+    "backup:notion": "node scripts/backup-to-notion.js docs/implementation_memo.md"
+  }
+}
