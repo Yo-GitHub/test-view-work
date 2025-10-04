@@ -75,8 +75,45 @@ const divider = [{ object: "block", type: "divider", divider: {} }];
     for (let i = 0; i < bodyBlocks.length; i += chunkSize) {
       const slice = bodyBlocks.slice(i, i + chunkSize);
       await notion.blocks.children.append({
-        block_id: pageId,
-        children: slice
+        // 1) 既存: blocks.children.append({ block_id: PAGE_ID, children })
+//    ↓↓↓ ここを差し替え
+import fs from 'fs';
+import { Client } from '@notionhq/client';
+
+const notion = new Client({ auth: process.env.NOTION_TOKEN });
+const PARENT = (process.env.NOTION_PAGE_ID || '').trim();
+const mdPath = process.argv[2] || 'docs/implementation_memo.md';
+
+// 読み込み＆段落→Notionブロック化（長文は1800字で分割）
+function toBlocks(text) {
+  const paras = text.split(/\r?\n\r?\n/).map(s => s.trim()).filter(Boolean);
+  const blocks = [];
+  for (const p of paras) {
+    for (let i = 0; i < p.length; i += 1800) {
+      blocks.push({ type: 'paragraph', paragraph: { rich_text: [{ text: { content: p.slice(i, i+1800) } }] } });
+    }
+  }
+  return blocks.length ? blocks : [{ type:'paragraph', paragraph:{ rich_text:[{ text:{ content:'(本文なし)'} }]} }];
+}
+
+// 本文ロード
+if (!fs.existsSync(mdPath)) { console.error(`本文なし: ${mdPath}`); process.exit(1); }
+const raw = fs.readFileSync(mdPath, 'utf-8');
+
+// 週次タイトル（JST）
+const nowJST = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+const weeklyTitle = `Weekly ${nowJST}`;
+
+// 2) 新規の子ページとして作成（親ページ直下）
+await notion.pages.create({
+  parent: { page_id: PARENT },
+  properties: {
+    title: { title: [{ text: { content: weeklyTitle } }] }
+  },
+  children: toBlocks(raw)
+});
+
+console.log('Notion子ページ 作成 完了');
       });
     }
     // 3) 区切り線

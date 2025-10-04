@@ -1,0 +1,28 @@
+{
+  "group": [
+    {
+      "id": "hoikushi",
+      "title": "保育士試験グループ分け問題集",
+      "file": "group.json"
+    }
+  ],
+  "match": [
+    {
+      "id": "hoikushi-terms",
+      "title": "用語↔定義（保育）",
+      "file": "match-.json"
+    }
+  ],
+  "mcq": [
+    {
+      "id": "hoikushi-basic",
+      "title": "保育士・基礎四択（単純版）",
+      "file": "mcq.json"
+    },
+    {
+      "id": "hoikushi-exam",
+      "title": "保育士・実戦過去問（本試験版）",
+      "file": "mcq-hoikushi-exam.json"
+    }
+  ]
+}
