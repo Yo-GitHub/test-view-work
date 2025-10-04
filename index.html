@@ -112,6 +112,11 @@
 <header>
   <h1>WordJam式トレーナー：グループ分け & マッチング</h1>
   <div class="sub">「覚える」から「整理して思い出す」へ。誤答は次ラウンドで多めに出します。</div>
+<span id="buildTag" class="pill"></span>
+<script>
+  document.getElementById('buildTag').textContent =
+    new Date().toISOString().replace(/\..+/, '');
+</script>
 </header>
 
 <main>
@@ -264,6 +269,7 @@ const GROUP_DATA = [
   {label:"灯油", group:"第4類"}
 ];
 
+let lastGroupIdx = -1;
 // --- group multi-question support ---
 let groupQuestions = [];      // 現在ロード中ファイルの questions[]（なければ単一を包む）
 let groupQFile = null;        // 現在の JSON パス
@@ -509,7 +515,6 @@ const GROUP_DATASET_FALLBACK = {
 
 let groupDataset = GROUP_DATASET_FALLBACK; // {title,bins,items}
 const binContainer = document.getElementById('binContainer');
-const groupTheme = document.getElementById('groupTheme');
 const groupThemeSelect = document.getElementById('groupThemeSelect');
 let groupCatalog = []; // {id,title,file}
 
@@ -545,33 +550,44 @@ async function switchGroupThemeByFile(path){
     const res = await fetch(path, {cache:'no-store'});
     if(!res.ok) throw new Error('theme file not found');
     const obj = await res.json();
-    // ---- multi-question file support (random + title display) ----
+    // ルート正規化：{questions:[]} もしくは {group:{questions:[]}} に対応
+    const root = (obj && obj.group && Array.isArray(obj.group.questions)) ? obj.group : obj;
     groupQFile = path;
     const titleEl = ensureGroupQuestionTitle();
-    groupHasMulti = Array.isArray(obj.questions) && obj.questions.length > 0;
+
+    groupHasMulti = Array.isArray(root.questions) && root.questions.length > 0;
 
     if (groupHasMulti) {
-      const idx = Math.floor(Math.random() * obj.questions.length);
-      const pick = obj.questions[idx];
+      let idx = Math.floor(Math.random() * root.questions.length);
+      // 直前と同じお題を避ける（1件しかない場合はそのまま）
+      if (root.questions.length > 1 && idx === lastGroupIdx) {
+        idx = (idx + 1) % root.questions.length;
+      }
+      lastGroupIdx = idx;
+      const pick = root.questions[idx];
       titleEl.textContent = pick.title || `お題 ${idx + 1}`;
-      obj.title = pick.title;
-      obj.bins = pick.bins;
-      obj.items = pick.items;
+      titleEl.style.display = 'inline-block';
+      // loadGroupFromJSON が理解できる形に整形
+      const dataset = loadGroupFromJSON({ title: pick.title, bins: pick.bins, items: pick.items });
+      if (!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid theme (questions)');
+      groupDataset = dataset;
+      FULL_GROUP_POOL = [...groupDataset.items];
+      if (typeof usedGroup !== 'undefined' && usedGroup && typeof usedGroup.clear === 'function') { usedGroup.clear(); }
     } else {
-      titleEl.textContent = obj.title || 'お題 1';
+      // 旧形式：単一の {bins, items} あるいは {group:[...]}
+      titleEl.textContent = root.title || 'お題 1';
+      titleEl.style.display = 'inline-block';
+      const dataset = loadGroupFromJSON(root);
+      if (!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid theme (single)');
+      groupDataset = dataset;
+      FULL_GROUP_POOL = [...groupDataset.items];
+      if (typeof usedGroup !== 'undefined' && usedGroup && typeof usedGroup.clear === 'function') { usedGroup.clear(); }
     }
-    // ---- end of multi-question support ----
-    const dataset = loadGroupFromJSON(obj);
-    if(!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid theme');
-    groupDataset = dataset;
-    FULL_GROUP_POOL = [...groupDataset.items];
-    if (typeof usedGroup !== 'undefined' && usedGroup && typeof usedGroup.clear === 'function') { usedGroup.clear(); }
   }catch(e){
     console.warn('テーマ切替に失敗：', e.message);
     return;
   }
   // タイトル更新と再描画
-  if(groupTheme) groupTheme.textContent = (groupDataset.title || 'グループ分け');
   renderBins();
   bindDnD();
   bank.querySelectorAll('.card').forEach(c => c.remove());
@@ -758,7 +774,8 @@ function updateGroupProgress(){
     setTimeout(() => {
       if (groupHasMulti && groupQFile) {
         matchedGroupCount = 0;
-        switchGroupThemeByFile(groupQFile); // 次のお題をランダム抽選
+        setTimeout(() => { switchGroupThemeByFile(groupQFile); }, 50);
+        return;
       } else {
         bank.querySelectorAll('.card').forEach(c => c.remove());
         sampleCurrent();
@@ -799,17 +816,21 @@ allBins().forEach(bin=>{
 
 // ====== 外部ファイル読込（自動JSON） ======
 function loadGroupFromJSON(obj){
-  // 形式A（新）：{ title?, bins:[{key,title}], items:[{label,bin,tag?,explain?}] }
-  if(obj && Array.isArray(obj.bins) && Array.isArray(obj.items)){
-    const title = obj.title || 'グループ分け';
-    return { title, bins: obj.bins, 
-    items: obj.items.map(x => ({
-        ...x,
-        group: x.bin  // ★正解判定で使う用にコピー
-      })) };
+  // 正規化：ネストされた { group: {...} } を許容
+  const src = (obj && obj.group && typeof obj.group === 'object') ? obj.group : obj;
+
+  // 形式A（新）：{ title?, bins:[{key,title}], items:[{label,bin,...}] }
+  if(src && Array.isArray(src.bins) && Array.isArray(src.items)){
+    const title = src.title || 'グループ分け';
+    return {
+      title,
+      bins: src.bins,
+      items: src.items.map(x => ({ ...x, group: x.bin })) // 判定互換
+    };
   }
+
   // 形式B（旧）：{ group:[{label, group}] } または配列そのもの
-  const arr = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.group) ? obj.group : null);
+  const arr = Array.isArray(src) ? src : (src && Array.isArray(src.group) ? src.group : null);
   if(arr){
     return {
       title: GROUP_DATASET_FALLBACK.title,
@@ -825,10 +846,34 @@ async function loadDefaultGroup(){
     const res = await fetch('./group.json', { cache: 'no-store' });
     if(!res.ok) throw new Error('group.json not found');
     const obj = await res.json();
-    const dataset = loadGroupFromJSON(obj);
-    if(!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid or empty group.json');
-    groupDataset = dataset;
-    FULL_GROUP_POOL = [...groupDataset.items];
+    const root = (obj && obj.group && Array.isArray(obj.group.questions)) ? obj.group : obj;
+    // questions[] を持つ場合は1問ランダム抽出
+    if (Array.isArray(root.questions) && root.questions.length) {
+      let idx = Math.floor(Math.random() * root.questions.length);
+      if (root.questions.length > 1 && idx === lastGroupIdx) {
+        idx = (idx + 1) % root.questions.length;
+      }
+      lastGroupIdx = idx;
+      const pick = root.questions[idx];
+      // ← ここを追加：デフォルト読込でも複数お題の自動遷移を有効化
+      groupHasMulti = true;
+      groupQFile = './group.json';
+      const dataset = loadGroupFromJSON({ title: pick.title, bins: pick.bins, items: pick.items });
+      if (!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid or empty group.json (questions)');
+      groupDataset = dataset;
+      FULL_GROUP_POOL = [...groupDataset.items];
+      const titleEl = ensureGroupQuestionTitle();
+      titleEl.textContent = pick.title || `お題 ${idx + 1}`;
+      titleEl.style.display = 'inline-block';
+    } else {
+      const dataset = loadGroupFromJSON(root);
+      if (!dataset || !dataset.items || !dataset.items.length) throw new Error('invalid or empty group.json');
+      groupDataset = dataset;
+      FULL_GROUP_POOL = [...groupDataset.items];
+      const titleEl = ensureGroupQuestionTitle();
+      titleEl.textContent = (root && root.title) ? root.title : (groupDataset.title || 'お題 1');
+      titleEl.style.display = 'inline-block';
+    }
   }catch(e){
     console.warn('外部JSON読込に失敗。デフォルト内蔵データを使用します →', e.message);
     groupDataset = GROUP_DATASET_FALLBACK;
@@ -836,7 +881,7 @@ async function loadDefaultGroup(){
   }
 
   // テーマ表示とビンの再描画
-  if (groupTheme) groupTheme.textContent = (groupDataset.title || 'グループ分け');
+  //if (groupTheme) groupTheme.textContent = (groupDataset.title || 'グループ分け');
   renderBins();
   bindDnD(); // 新しいビンにD&Dを付与
 
@@ -1010,6 +1055,13 @@ function sampleMatch(){
   const leftBins = new Set(FULL_MATCH_LEFT.map(x=>x.bin));
   const rightBins = new Set(FULL_MATCH_RIGHT.map(x=>x.bin));
   const commonBins = [...leftBins].filter(b => rightBins.has(b));
+
+  // 安全ネット：ペア不足の可視化
+  if (commonBins.length < 4) {
+    const el = document.getElementById('matchPoolInfo');
+    if (el) el.textContent = `⚠ プール不足: ${commonBins.length} / 表示: ${Math.min(4, commonBins.length)}`;
+  }
+
   const n = Math.min(MATCH_POOL_SIZE, commonBins.length);
   const pickBins = weightedSample(commonBins.map(b=>({b})), n, x=>x.b).map(x=>x.b);
   L = pickBins.map(b => FULL_MATCH_LEFT.find(x=>x.bin===b)).filter(Boolean);

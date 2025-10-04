@@ -1,9 +1,9 @@
 {
   "group": [
     {
-      "id": "hoikushi",
+      "id": "group",
       "title": "乙四-直前対策",
-      "file": "group-hoikushi.json"
+      "file": "group.json"
     }
   ],
   "match": [
