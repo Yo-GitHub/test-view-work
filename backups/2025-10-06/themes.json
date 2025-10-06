@@ -1,0 +1,23 @@
+{
+  "group": [
+    {
+      "id": "group",
+      "title": "乙四-直前対策",
+      "file": "group.json"
+    }
+  ],
+  "match": [
+    {
+      "id": "match",
+      "title": "乙四-直前対策",
+      "file": "match.json"
+    }
+  ],
+  "mcq": [
+    {
+      "id": "mcq",
+      "title": "乙四-直前対策",
+      "file": "mcq.json"
+    }
+  ]
+}
